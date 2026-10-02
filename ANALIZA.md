@@ -103,3 +103,31 @@ skrypt przelicza hex → pubkey → adres → WIF i porównuje z danymi z pliku.
 
 ⚠️ Pliki zawierają klucze prywatne w postaci jawnej — kto je ma, ma kontrolę nad środkami.
 Nie trzymaj ich w publicznym repozytorium.
+
+## 6. Czy WIĘCEJ danych pozwoli zbudować algorytm przewidujący klucze?
+
+Krótko: **tylko w jednym, konkretnym scenariuszu — i te dane już sugerują, że go tu nie ma.**
+
+| Scenariusz | Czy więcej danych pomoże? |
+|---|---|
+| Odzyskanie klucza z `_address`/`_public_key` (ECDLP) | ❌ Nigdy. To ~2¹²⁸ operacji, niezależnie od liczby próbek. Milion dumpów nie zmienia nic. |
+| Klucz = funkcja `uid`/`salt` (hash, KDF) | ❌ Wystarczyłaby 1 para, żeby to wykryć. 51 par i >50 hipotez → 0 trafień. |
+| Klucze z `random` Pythona (MT19937) | ✅ **Tak** — przy ≥ 79 kluczach w oryginalnej kolejności generowania stan MT19937 (624 słowa 32-bit) daje się odtworzyć i przewidzieć wszystkie następne oraz poprzednie klucze. |
+| Klucze z `os.urandom` / `secrets` (CSPRNG) | ❌ Nie. Nawet miliony próbek nie dają przewagi. |
+| Słaby seed (np. `random.seed(time)`) | ✅ Warunkowo — przestrzeń seedów do przeszukania (np. sekundy w listopadzie 2022 ≈ 2,6 mln) jest brute-force'owalna, o ile klucz jest pierwszym wyjściem po zasianiu. |
+
+Skrypt **`prng_check.py`** testuje ten realny przypadek automatycznie:
+
+```bash
+python3 prng_check.py spakowane.zip.zip
+# Rekordow: 51  (slow 32-bit: 408, potrzeba >= 632)
+# ZA MALO DANYCH: brakuje ok. 28 kluczy w oryginalnej kolejnosci generowania
+```
+
+Poprawność metody potwierdzona na danych syntetycznych: dla 90 kluczy z `random.getrandbits(256)`
+skrypt odtwarza stan i bezbłędnie przewiduje kolejne klucze („ZLAMANE”).
+
+**Wniosek praktyczny:** przyślij pełny zbiór (≥ 79 dumpów, najlepiej wszystkie, posortowane po `_uid`,
+czyli w kolejności generowania). Jeśli generator używał `random` — algorytm powstanie i będzie
+przewidywał klucze. Jeśli używał `os.urandom` (standard w bibliotekach bitcoinowych, i tak to
+wygląda tutaj: korelacja 0,021, rozkład bitów 0,5040) — **żadna ilość danych nie wystarczy**.
