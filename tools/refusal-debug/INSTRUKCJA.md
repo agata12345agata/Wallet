@@ -144,23 +144,30 @@ nie zwrócił tekstu
 Zobaczysz coś w tym stylu:
 
 ```python
-# PRZED
-response = client.messages.create(
-    model=MODEL,
-    max_tokens=1024,
-    messages=history,
-)
+while True:
+    line = input("TY > ")
+    history.append({"role": "user", "content": line})
 
-print("DEBUG STOP:", response.stop_reason)
-print("DEBUG BLOCKS:", response.content)
+    # --- Twój obecny kod ---
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        messages=history,
+    )
 
-if not response.content:
-    print("HAJKA AI > [Model nie zwrócił tekstu]")
-    continue
+    print("DEBUG STOP:", response.stop_reason)
+    print("DEBUG BLOCKS:", response.content)
 
-text = response.content[0].text
-print("HAJKA AI >", text)
+    if not response.content:
+        print("HAJKA AI > [Model nie zwrócił tekstu]")
+        continue
+
+    text = response.content[0].text
+    print("HAJKA AI >", text)
 ```
+
+Fragment jest pokazany **razem z pętlą**, żeby było jasne, jakie ma być wcięcie
+(w Twoim pliku pętla już istnieje — nie dodawaj drugiej).
 
 **Nie zmieniaj jeszcze nic** — najpierw dodaj import na górze pliku.
 
@@ -184,16 +191,26 @@ import refusal_guard as rg
 Podmień blok `if not response.content:` na to:
 
 ```python
-# PO
-reply = rg.parse_any(response)
+while True:
+    line = input("TY > ")
+    history.append({"role": "user", "content": line})
 
-if reply.refused:
-    print("HAJKA AI >", rg.render(reply))
-    history = rg.strip_last_turn(history)
-    continue
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        messages=history,
+    )
 
-text = reply.text
-print("HAJKA AI >", text)
+    # --- nowy kod: najpierw sprawdź stop_reason ---
+    reply = rg.parse_any(response)
+
+    if reply.refused:
+        print("HAJKA AI >", rg.render(reply))
+        history = rg.strip_last_turn(history)
+        continue
+
+    print("HAJKA AI >", reply.text)
+    history.append({"role": "assistant", "content": reply.text})
 ```
 
 I **usuń** dwie linijki `print("DEBUG STOP:", ...)` oraz `print("DEBUG BLOCKS:", ...)`.
@@ -201,20 +218,25 @@ I **usuń** dwie linijki `print("DEBUG STOP:", ...)` oraz `print("DEBUG BLOCKS:"
 Cały fragment ma teraz wyglądać tak:
 
 ```python
-response = client.messages.create(
-    model=MODEL,
-    max_tokens=1024,
-    messages=history,
-)
+while True:
+    line = input("TY > ")
+    history.append({"role": "user", "content": line})
 
-reply = rg.parse_any(response)
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        messages=history,
+    )
 
-if reply.refused:
-    print("HAJKA AI >", rg.render(reply))
-    history = rg.strip_last_turn(history)
-    continue
+    reply = rg.parse_any(response)
 
-print("HAJKA AI >", reply.text)
+    if reply.refused:
+        print("HAJKA AI >", rg.render(reply))
+        history = rg.strip_last_turn(history)
+        continue
+
+    print("HAJKA AI >", reply.text)
+    history.append({"role": "assistant", "content": reply.text})
 ```
 
 Zapisz plik (`Ctrl+O`, `Enter`, `Ctrl+X` w nano).
@@ -270,20 +292,26 @@ def send(model, messages, max_tokens=1024, system=None, tools=None, **kw):
         kwargs["tools"] = tools
     return client.messages.create(**kwargs)
 
-reply = rg.ask(
-    send,
-    model=MODEL,
-    messages=history,
-    fallback_model=os.environ.get("FALLBACK_MODEL"),
-    max_tokens=2048,
-)
 
-if reply.refused:
-    print("HAJKA AI >", rg.render(reply))
-    history = rg.strip_last_turn(history)
-    continue
-print("HAJKA AI >", reply.text)
-history.append({"role": "assistant", "content": reply.text})
+while True:
+    line = input("TY > ")
+    history.append({"role": "user", "content": line})
+
+    reply = rg.ask(
+        send,
+        model=MODEL,
+        messages=history,
+        fallback_model=os.environ.get("FALLBACK_MODEL"),
+        max_tokens=2048,
+    )
+
+    if reply.refused:
+        print("HAJKA AI >", rg.render(reply))
+        history = rg.strip_last_turn(history)
+        continue
+
+    print("HAJKA AI >", reply.text)
+    history.append({"role": "assistant", "content": reply.text})
 ```
 
 > Uwaga: jeśli w Twoim agencie wywołanie ma dodatkowe parametry (`system`, `tools`,
@@ -381,6 +409,7 @@ przy innej treści.
 |---|---|---|
 | `ModuleNotFoundError: refusal_guard` | moduł nie leży obok agenta | `cp` do katalogu agenta (krok 2) |
 | `AttributeError: 'dict' object has no attribute ...` | mieszasz SDK i JSON | używaj `rg.parse_any(response)` — obsługuje oba |
+| `SyntaxError: 'continue' not properly in loop` | wkleiłeś fragment poza pętlą `while` | wklej kod **wewnątrz** istniejącej pętli agenta, z takim wcięciem jak w kroku 8 |
 | Odmowa dalej przy każdym „hej” | prompt / narzędzia / historia | krok 12 i 13 |
 | Komunikat nadal `[Model nie zwrócił tekstu]` | edytujesz inny plik niż uruchamiasz | `grep -rn "nie zwrócił" ~/hajka` |
 | `[odmowa modelu]` przy każdej wiadomości | jeden element promptu blokuje wszystko | krok 12, potem edycja promptu |
