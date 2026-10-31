@@ -101,7 +101,129 @@ zadziałał i jaka kategoria.
 > kolejnym wywołaniu klasyfikator zadziała znowu. Retry „z mocniejszym promptem” też nie pomaga.
 > Albo usuń/przeredaguj winny fragment historii, albo przełącz się na inny model.
 
-## 3. Poprawka w kodzie agenta
+## 3. Jak podłączyć obsługę
+
+W tym katalogu masz trzy rzeczy:
+
+| Plik | Do czego |
+|---|---|
+| `refusal_guard.py` | gotowy moduł: parsuje odpowiedź (SDK, HTTP, OpenAI-compatible), rozróżnia `text` / `refusal` / `empty` / `truncated` / `error`, daje komunikat po polsku i jeden fallback |
+| `example_loop.py` | działający agent konsolowy `TY > / HAJKA AI >` z podłączoną obsługą — do porównania ze swoim kodem |
+| `diagnose_refusal.py` | ustala, **co** blokuje (system prompt / narzędzia / historia / proxy) |
+
+Wystarczy skopiować `refusal_guard.py` obok swojego agenta (albo dodać ten katalog do `sys.path`).
+
+### Gdzie dokładnie to wstawić
+
+Reguła: **`stop_reason` czytasz zawsze przed `content[0]`**. W Twojej pętli zmienia się
+dosłownie kilka linii — tam, gdzie dziś wypisujesz `DEBUG STOP:` i `[Model nie zwrócił tekstu]`:
+
+```
+linia od użytkownika
+   └─> history.append({"role": "user", ...})
+   └─> reply = refusal_guard.ask(send, model=..., messages=history, ...)
+   └─> if reply.refused:            # <-- TU, zamiast content[0]
+           print(render(reply))     #     komunikat z kategorią i wyjaśnieniem
+           history = strip_last_turn(history)   #     nie zatruwaj kolejnych tur
+           continue
+   └─> else: print(reply.text); history.append({"role": "assistant", ...})
+```
+
+### Wariant A — najmniejsza możliwa zmiana (3 linie)
+
+Jeżeli nie chcesz niczego przepisywać, owiń tylko odczyt odpowiedzi:
+
+```python
+import refusal_guard as rg
+
+raw = client.messages.create(...)        # albo dict z requests/urllib
+reply = rg.parse_any(raw)
+
+if reply.refused:                         # stop_reason == "refusal"
+    print(rg.render(reply))               # "[odmowa modelu] ... kategoria: ..."
+    continue                              # NIE czytaj content[0], NIE ponawiaj w pętli
+
+text = reply.text                         # to samo, co dotąd: sklejone bloki "text"
+```
+
+`parse_any()` sam rozpoznaje format: obiekt SDK, surowy JSON z `stop_reason`/`content`
+albo odpowiedź OpenAI-compatible z `choices[].finish_reason`.
+
+### Wariant B — pełne użycie (fallback + porządki w historii)
+
+`ask()` przyjmuje Twoją funkcję wysyłającą żądanie, więc nie narzuca klienta HTTP:
+
+```python
+import refusal_guard as rg
+
+def send(model, messages, max_tokens=1024, system=None, tools=None, **kw):
+    kwargs = {"model": model, "max_tokens": max_tokens, "messages": messages}
+    if system is not None:
+        kwargs["system"] = system
+    if tools is not None:
+        kwargs["tools"] = tools
+    return client.messages.create(**kwargs)      # obiekt SDK albo dict - oba zadziałają
+
+history = []
+while True:
+    line = input("TY > ")
+    history.append({"role": "user", "content": line})
+
+    reply = rg.ask(
+        send,
+        model=MODEL,
+        fallback_model=FALLBACK_MODEL,           # None = bez fallbacku
+        messages=history,
+        system=SYSTEM_PROMPT,
+        tools=TOOLS,                             # albo None
+        max_tokens=2048,
+    )
+
+    if reply.refused:
+        print("HAJKA AI >", rg.render(reply))
+        history = rg.strip_last_turn(history)    # usuń odrzuconą turę
+        continue
+
+    print("HAJKA AI >", rg.render(reply))
+    history.append({"role": "assistant", "content": reply.text})
+```
+
+Co `ask()` robi za Ciebie:
+
+- rozpoznaje odmowę i **nie** traktuje jej jak błąd sieci,
+- przy `cyber` / `bio` / `frontier_llm` / `general_harms` / `null` robi **jedną** próbę na `fallback_model`,
+- przy `reasoning_extraction` **nie** ponawia (to zawsze wina promptu — retry tylko marnuje tokeny),
+- ustawia `reply.note` („odpowiedź z modelu zapasowego: …”), żebyś wiedział, który model odpowiedział,
+- nie zapętla się: maksymalnie dwa wywołania.
+
+### Wariant C — bramka OpenAI-compatible / własne proxy
+
+Jeśli używasz `openai` SDK albo idziesz przez gateway (OpenRouter, LiteLLM, własne proxy),
+obsłuż **oba** pola — bramki mapują odmowę różnie:
+
+```python
+resp = client.chat.completions.create(model=MODEL, messages=msgs)
+reply = rg.parse_openai(resp)
+
+if reply.refused:            # finish_reason == "refusal" albo "content_filter"
+    print(rg.render(reply))
+elif not reply.text:         # HTTP 200, pusto, finish_reason "stop" -> bramka zgubiła odmowę
+    print("[pusta odpowiedź] sprawdź stop_details w logach bramki")
+```
+
+### Wariant D — szybki test na sucho (bez płacenia za wywołania)
+
+Zanim wyślesz cokolwiek, sprawdź, czy system prompt nie prosi o rozumowanie:
+
+```python
+hits = rg.ReasoningExtractionGuard().check(SYSTEM_PROMPT, *[t["description"] for t in TOOLS])
+if hits:
+    print("Prompt może wywołać reasoning_extraction:", hits)
+```
+
+Gotowy, uruchamialny przykład całości: `python3 example_loop.py` (wymaga `ANTHROPIC_API_KEY`).
+
+## 4. Poprawka w kodzie agenta
 
 Minimalna, poprawna obsługa — zamiast `[Model nie zwrócił tekstu]` agent powinien powiedzieć
 użytkownikowi, *co* się stało:
@@ -161,7 +283,7 @@ if data.get("stop_reason") == "refusal":
     print("refusal:", d.get("category"), "-", d.get("explanation"))
 ```
 
-## 4. Inne przyczyny pustej odpowiedzi (żeby nie mylić ich z refusal)
+## 5. Inne przyczyny pustej odpowiedzi (żeby nie mylić ich z refusal)
 
 | Objaw | Prawdziwa przyczyna |
 |---|---|
@@ -171,7 +293,7 @@ if data.get("stop_reason") == "refusal":
 | `finish_reason: "refusal"` / pusty `content` w trybie OpenAI-compatible | ten sam refusal, tylko zmapowany przez gateway — obsłuż oba pola |
 | HTTP 200, `content: []`, ale `stop_reason` inny niż `refusal` | zwykle błąd proxy/przekierowania — porównaj z `request-id` |
 
-## 5. Notatki o kosztach
+## 6. Notatki o kosztach
 
 - Odmowa **przed** wygenerowaniem czegokolwiek jest rozliczana tylko w kategoriach
   `bio`, `frontier_llm` i `reasoning_extraction` (stan na wrzesień 2026). W `cyber`,
@@ -180,7 +302,7 @@ if data.get("stop_reason") == "refusal":
 - Odmowa w środku streamu: to, co już wyciekło, jest niekompletne — **odrzuć** częściową
   odpowiedź, nie pokazuj jej użytkownikowi.
 
-## 6. Checklist
+## 7. Checklist
 
 - [ ] Logujesz `stop_reason`, `stop_details.category`, `stop_details.explanation` i `request-id`.
 - [ ] Twoja pętla sprawdza `stop_reason` **przed** `content[0]`.
