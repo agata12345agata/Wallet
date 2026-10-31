@@ -3,3 +3,4 @@ out.json
 export*.json
 addresses.json
 *.wifs
+__pycache__/
