@@ -107,7 +107,9 @@ W tym katalogu masz trzy rzeczy:
 
 | Plik | Do czego |
 |---|---|
+| `INSTRUKCJA.md` | **krok po kroku od zera** — od pobrania plików do uruchomienia agenta |
 | `refusal_guard.py` | gotowy moduł: parsuje odpowiedź (SDK, HTTP, OpenAI-compatible), rozróżnia `text` / `refusal` / `empty` / `truncated` / `error`, daje komunikat po polsku i jeden fallback |
+| `selftest.py` | 23 testy offline — sprawdzają moduł bez wywołań API (zero kosztów) |
 | `example_loop.py` | działający agent konsolowy `TY > / HAJKA AI >` z podłączoną obsługą — do porównania ze swoim kodem |
 | `diagnose_refusal.py` | ustala, **co** blokuje (system prompt / narzędzia / historia / proxy) |
 
