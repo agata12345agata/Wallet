@@ -1,0 +1,9 @@
+# Dane portfela i archiwa z kluczami — nie należą do repozytorium
+wallet.dat
+*.dat
+*.zip
+dump-*.json
+
+# Python
+__pycache__/
+*.pyc
