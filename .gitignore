@@ -1,0 +1,6 @@
+# wyniki eksportu zawierają klucze prywatne — nigdy do repozytorium
+out.json
+export*.json
+addresses.json
+*.wifs
+__pycache__/
